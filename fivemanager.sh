@@ -787,6 +787,122 @@ change_language() {
     sleep 2
 }
 
+update_server() {
+    echo -e "${YELLOW}$(get_translation "select_server_to_update")${NC}"
+    script_dir="$(dirname "$(realpath "$0")")"
+    available_servers=()
+    for dir in "$script_dir"/*/; do
+        if [ -f "${dir}run.sh" ]; then
+            available_servers+=("$dir")
+        fi
+    done
+    
+    if [ ${#available_servers[@]} -eq 0 ]; then
+        echo "$(get_translation "no_servers_found_to_update")"
+        return 1
+    fi
+    
+    for ((i=0; i<${#available_servers[@]}; i++)); do
+        server_name=$(basename "${available_servers[$i]}")
+        echo "$((i+1)). $server_name"
+    done
+    
+    read -p "$(get_translation "enter_server_number_to_update") " server_choice
+    if ! [[ "$server_choice" =~ ^[0-9]+$ ]] || [ "$server_choice" -lt 1 ] || [ "$server_choice" -gt ${#available_servers[@]} ]; then
+        echo "$(get_translation "invalid_choice_update")"
+        return 1
+    fi
+    
+    selected_server="${available_servers[$((server_choice-1))]}"
+    server_name=$(basename "${selected_server}")
+    
+    echo "$(get_translation "select_version_type")"
+    echo "1. $(get_translation "latest_version")"
+    echo "2. $(get_translation "recommended_version")"
+    read -p "$(get_translation "enter_version_choice") " version_choice
+    
+    case "$version_choice" in
+        1)
+            echo "$(get_translation "fetching_latest_version")"
+            api_url="https://changelogs-live.fivem.net/api/changelog/versions/linux/server"
+            version_info=$(curl -s "$api_url")
+            if [ $? -eq 0 ]; then
+                build_url=$(echo "$version_info" | jq -r '.latest_download')
+            else
+                echo "$(get_translation "failed_to_fetch_version_info")"
+                return 1
+            fi
+            ;;
+        2)
+            echo "$(get_translation "fetching_recommended_version")"
+            api_url="https://changelogs-live.fivem.net/api/changelog/versions/linux/server"
+            version_info=$(curl -s "$api_url")
+            if [ $? -eq 0 ]; then
+                build_url=$(echo "$version_info" | jq -r '.recommended_download')
+            else
+                echo "$(get_translation "failed_to_fetch_version_info")"
+                return 1
+            fi
+            ;;
+        *)
+            echo "$(get_translation "invalid_version_choice")"
+            return 1
+            ;;
+    esac
+    
+    if [ -z "$build_url" ] || [ "$build_url" = "null" ]; then
+        echo "$(get_translation "failed_obtain_build_url")"
+        return 1
+    fi
+    
+    echo "$(get_translation "downloading_new_version")"
+    cd "$selected_server"
+    
+    if [ -f "fx.tar.xz" ]; then
+        rm fx.tar.xz
+    fi
+    
+    echo "Downloading from: $build_url"
+    if curl -L -o "fx.tar.xz" "$build_url"; then
+        echo "$(get_translation "download_successful")"
+        
+        echo "$(get_translation "backing_up_current_version")"
+        timestamp=$(date +%Y%m%d_%H%M%S)
+        mkdir -p "backups"
+        if [ -d "alpine" ]; then
+            tar -czf "backups/server_backup_${timestamp}.tar.gz" alpine
+            echo "$(get_translation "backup_created")"
+            
+            echo "$(get_translation "removing_old_version")"
+            rm -rf alpine
+            
+            echo "$(get_translation "extracting_new_version")"
+            if tar -xf fx.tar.xz; then
+                echo "$(get_translation "update_completed_successfully")"
+                rm fx.tar.xz
+            else
+                echo "$(get_translation "extraction_failed")"
+                echo "$(get_translation "restoring_backup")"
+                tar -xzf "backups/server_backup_${timestamp}.tar.gz"
+                return 1
+            fi
+        else
+            echo "$(get_translation "no_existing_installation")"
+            echo "$(get_translation "performing_fresh_install")"
+            if tar -xf fx.tar.xz; then
+                echo "$(get_translation "installation_completed_successfully")"
+                rm fx.tar.xz
+            else
+                echo "$(get_translation "installation_failed")"
+                return 1
+            fi
+        fi
+    else
+        echo "$(get_translation "download_failed")"
+        return 1
+    fi
+}
+
 display_menu() {
 
     printf "\033c"
@@ -815,6 +931,7 @@ display_menu() {
     printf "${LIGHT_GREEN}$(get_translation "general_options")${NC}\n"
     printf "${CYAN}11.${NC} %-30s${NC} - %s\n" "$(get_translation "change_language_option")" "$(get_translation "change_language_option_desc")"
     printf "${CYAN}12.${NC} %-30s${NC} - %s\n" "$(get_translation "update_script")" "$(get_translation "update_script_desc")"
+    printf "${CYAN}13.${NC} %-30s${NC} - %s\n" "$(get_translation "update_server")" "$(get_translation "update_server_desc")"
     printf "${CYAN}0. ${NC} %-30s${NC} - %s\n\n" "$(get_translation "exit")" "$(get_translation "exit_desc")"
 
     # Footer
@@ -837,6 +954,7 @@ while true; do
         10) manage_security ;;
         11) change_language ;;
         12) update_script ;;
+        13) update_server ;;
         0 | exit | stop | quit) echo -e "${RED}$(get_translation "exiting_script")${NC}"; exit 0 ;;
         *) echo -e "${RED}$(get_translation "invalid_choice1")${NC}" ;;
     esac
